@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timedelta
 from colorama import Fore, Style, init
 import random
+import urllib.parse
 
 init(autoreset=True)
 
@@ -71,6 +72,85 @@ def load_proxies():
         print(Fore.YELLOW + "⚠ File proxy.txt tidak ditemukan. Melanjutkan tanpa proxy.\n")
         return []
 
+def load_interaction_config():
+    """Load konfigurasi interaksi dari file interaksi.txt"""
+    config = {
+        'follow_enabled': False,
+        'follow_user_ids': [],
+        'comment_words': ["Hi", "GM", "Hello", "GN", "Like", "Nice", "Great", "Amazing"]
+    }
+    
+    try:
+        with open('interaksi.txt', 'r', encoding='utf-8') as file:
+            lines = [line.strip() for line in file if line.strip() and not line.strip().startswith('#')]
+            
+            for line in lines:
+                # Parse FOLLOW
+                if line.upper().startswith('FOLLOW='):
+                    value = line.split('=', 1)[1].strip().upper()
+                    config['follow_enabled'] = value == 'ON'
+                
+                # Parse FOLLOW_USER_ID
+                elif line.upper().startswith('FOLLOW_USER_ID='):
+                    ids_str = line.split('=', 1)[1].strip()
+                    if ids_str:
+                        # Support multiple IDs separated by comma
+                        ids = [id.strip() for id in ids_str.split(',') if id.strip()]
+                        try:
+                            config['follow_user_ids'] = [int(id) for id in ids]
+                        except ValueError:
+                            print(Fore.YELLOW + "⚠ Format FOLLOW_USER_ID tidak valid, menggunakan default")
+                
+                # Parse COMMENT_WORDS
+                elif line.upper().startswith('COMMENT_WORDS='):
+                    words_str = line.split('=', 1)[1].strip()
+                    if words_str:
+                        # Support multiple words separated by comma
+                        words = [word.strip() for word in words_str.split(',') if word.strip()]
+                        if words:
+                            config['comment_words'] = words
+        
+        # Display loaded config
+        print(Fore.BLUE + "✓ Konfigurasi Interaksi:")
+        print(Fore.WHITE + f"  • Follow: {Fore.GREEN + 'ON' if config['follow_enabled'] else Fore.RED + 'OFF'}")
+        if config['follow_enabled'] and config['follow_user_ids']:
+            print(Fore.WHITE + f"  • Follow User IDs: {', '.join(map(str, config['follow_user_ids']))}")
+        print(Fore.WHITE + f"  • Comment Words: {', '.join(config['comment_words'][:5])}" + 
+              (f" (+{len(config['comment_words'])-5} lainnya)" if len(config['comment_words']) > 5 else ""))
+        print()
+        
+        return config
+        
+    except FileNotFoundError:
+        print(Fore.YELLOW + "⚠ File interaksi.txt tidak ditemukan, membuat file default...\n")
+        
+        # Buat file default
+        default_content = """# Konfigurasi Interaksi Bot 3VOgram
+# Gunakan # untuk komentar
+
+# Follow User (ON/OFF)
+FOLLOW=ON
+
+# ID User yang akan di-follow (pisahkan dengan koma jika lebih dari 1)
+FOLLOW_USER_ID=66242
+
+# Kata-kata untuk komentar (pisahkan dengan koma)
+COMMENT_WORDS=Hi,GM,Hello,GN,Like,Nice,Great,Amazing,Cool,Awesome,Thanks,Good
+"""
+        
+        try:
+            with open('interaksi.txt', 'w', encoding='utf-8') as file:
+                file.write(default_content)
+            print(Fore.GREEN + "✓ File interaksi.txt berhasil dibuat dengan konfigurasi default\n")
+        except Exception as e:
+            print(Fore.RED + f"✗ Gagal membuat file interaksi.txt: {str(e)}\n")
+        
+        return config
+    
+    except Exception as e:
+        print(Fore.RED + f"✗ Error membaca interaksi.txt: {str(e)}\n")
+        return config
+
 def get_proxy(proxies):
     if not proxies:
         return None
@@ -82,7 +162,6 @@ def telegram_login(init_data, proxy=None):
         url = "https://qapi.3vo.me/v1//auth/telegram_login"
         
         # Parse init_data untuk mendapatkan user info
-        import urllib.parse
         params = dict(urllib.parse.parse_qsl(init_data))
         user_data = json.loads(urllib.parse.unquote(params.get('user', '{}')))
         
@@ -206,7 +285,6 @@ def claim_free_diamond(token, user_id, telegram_id, proxy=None):
                     return True
         return False
     except Exception as e:
-        # Jika error kemungkinan sudah diklaim atau belum waktunya
         return False
 
 def spin_wheel(token, user_id, proxy=None):
@@ -255,7 +333,248 @@ def open_box(token, user_id, item_key, amount, proxy=None):
     except Exception as e:
         return False
 
-def process_account(init_data, account_num, total_accounts, proxies):
+def follow_user(token, follow_to_id, proxy=None):
+    """Follow user tertentu"""
+    try:
+        url = "https://api.3vo.me/v1/ups/follow_user"
+        payload = {"follow_to_id": follow_to_id}
+        
+        response = requests.post(url, json=payload, headers=get_headers(token), proxies=proxy, timeout=30)
+        
+        if response.status_code == 200:
+            print(Fore.GREEN + f"  ✓ Berhasil follow user ID: {follow_to_id}")
+            return True
+        return False
+    except Exception as e:
+        return False
+
+def get_feed(token, limit=20, proxy=None):
+    """Ambil feed artikel"""
+    try:
+        url = "https://api.3vo.me/v1/tas/feed"
+        payload = {
+            "from_id": 0,
+            "limit": limit,
+            "content_type": ["text,image,video,audio,short_video"],
+            "keywords": [],
+            "show_reposts": False
+        }
+        
+        response = requests.post(url, json=payload, headers=get_headers(token), proxies=proxy, timeout=30)
+        
+        if response.status_code == 200:
+            data = response.json()
+            items = data.get('data', [])
+            print(Fore.GREEN + f"  ✓ Berhasil ambil {len(items)} artikel dari feed")
+            return items
+        return []
+    except Exception as e:
+        print(Fore.RED + f"  ✗ Gagal ambil feed: {str(e)}")
+        return []
+
+def like_article(token, article_id, proxy=None):
+    """Like artikel"""
+    try:
+        url = "https://api.3vo.me/v1/lcs/like"
+        payload = {
+            "likeable_id": article_id,
+            "likeable_type": "article"
+        }
+        
+        response = requests.post(url, json=payload, headers=get_headers(token), proxies=proxy, timeout=30)
+        return response.status_code == 200
+    except Exception as e:
+        return False
+
+def comment_article(token, article_id, content, proxy=None):
+    """Komentar pada artikel"""
+    try:
+        url = "https://api.3vo.me/v1/lcs/comment"
+        payload = {
+            "commentable_id": article_id,
+            "commentable_type": "article",
+            "content": content
+        }
+        
+        response = requests.post(url, json=payload, headers=get_headers(token), proxies=proxy, timeout=30)
+        return response.status_code == 200
+    except Exception as e:
+        return False
+
+def process_feed_interactions(token, feed_items, max_count=10, comment_words=None, proxy=None):
+    """Like dan komen artikel dari feed"""
+    try:
+        print(Fore.YELLOW + "\n➤ Memproses like dan komen artikel...")
+        
+        if comment_words is None:
+            comment_words = ["Hi", "GM", "Hello", "GN", "Like", "Nice", "Great", "Amazing"]
+        
+        processed = 0
+        
+        for item in feed_items:
+            if processed >= max_count:
+                break
+                
+            article_id = item.get('article_id')
+            if not article_id:
+                continue
+            
+            # Skip jika komen dinonaktifkan
+            if item.get('enable_comment') is False:
+                continue
+            
+            # Like artikel
+            if like_article(token, article_id, proxy):
+                # Komen artikel
+                comment_text = random.choice(comment_words)
+                if comment_article(token, article_id, comment_text, proxy):
+                    processed += 1
+                    print(Fore.GREEN + f"  ✓ Like & komen artikel {article_id}: {comment_text}")
+                    time.sleep(0.5)
+        
+        print(Fore.BLUE + f"  Total artikel diproses: {processed}")
+        return True
+    except Exception as e:
+        print(Fore.RED + f"  ✗ Gagal proses feed: {str(e)}")
+        return False
+
+def get_achievements(token, user_id, proxy=None):
+    """Ambil daftar achievements"""
+    try:
+        url = "https://qapi.3vo.me/v1/ads/get_achievements"
+        payload = {"user_id": str(user_id)}
+        
+        response = requests.post(url, json=payload, headers=get_headers(token), proxies=proxy, timeout=30)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('success'):
+                achievements = data.get('achievements', [])
+                print(Fore.GREEN + f"  ✓ Berhasil ambil {len(achievements)} achievements")
+                return achievements
+        return []
+    except Exception as e:
+        print(Fore.RED + f"  ✗ Gagal ambil achievements: {str(e)}")
+        return []
+
+def claim_achievement(token, user_id, achievement_key, stage_index, proxy=None):
+    """Klaim achievement tertentu"""
+    try:
+        url = "https://qapi.3vo.me/v1/ads/claim_achievement"
+        payload = {
+            "user_id": str(user_id),
+            "achievement_key": achievement_key,
+            "stage_index": stage_index
+        }
+        
+        response = requests.post(url, json=payload, headers=get_headers(token), proxies=proxy, timeout=30)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('success'):
+                return True
+        return False
+    except Exception as e:
+        return False
+
+def process_achievements(token, user_id, achievements, proxy=None):
+    """Proses klaim semua achievements yang tersedia"""
+    try:
+        print(Fore.YELLOW + "\n➤ Memproses achievements...")
+        total_claimed = 0
+        
+        for achievement in achievements:
+            achievement_key = achievement.get('achievementKey')
+            if not achievement_key:
+                continue
+            
+            completed_stages = achievement.get('completedStages', {})
+            claimed_stages = set(achievement.get('claimedStages', []))
+            
+            for stage_key in completed_stages.keys():
+                try:
+                    stage_index = int(stage_key)
+                except:
+                    continue
+                
+                # Skip jika sudah diklaim
+                if stage_index in claimed_stages:
+                    continue
+                
+                if claim_achievement(token, user_id, achievement_key, stage_index, proxy):
+                    total_claimed += 1
+                    print(Fore.GREEN + f"  ✓ Klaim achievement: {achievement_key} stage {stage_index}")
+                    time.sleep(0.5)
+        
+        print(Fore.BLUE + f"  Total achievements diklaim: {total_claimed}")
+        return True
+    except Exception as e:
+        print(Fore.RED + f"  ✗ Gagal proses achievements: {str(e)}")
+        return False
+
+def claim_task(token, user_id, task_key, proxy=None):
+    """Klaim task tertentu"""
+    try:
+        url = "https://qapi.3vo.me/v1/dts/claim"
+        payload = {
+            "user_id": str(user_id),
+            "task_key": task_key
+        }
+        
+        response = requests.post(url, json=payload, headers=get_headers(token), proxies=proxy, timeout=30)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('success'):
+                print(Fore.GREEN + f"  ✓ Klaim task: {task_key}")
+                return True
+        elif response.status_code == 409:
+            print(Fore.YELLOW + f"  ⚠ Task {task_key} sudah diklaim sebelumnya")
+        return False
+    except Exception as e:
+        return False
+
+def process_tasks(token, user_id, proxy=None):
+    """Proses klaim tasks"""
+    try:
+        print(Fore.YELLOW + "\n➤ Memproses tasks...")
+        
+        # Daftar task yang bisa diklaim
+        task_keys = ["spin_wheel", "daily_login", "like_post", "comment_post"]
+        
+        for task_key in task_keys:
+            claim_task(token, user_id, task_key, proxy)
+            time.sleep(0.5)
+        
+        return True
+    except Exception as e:
+        print(Fore.RED + f"  ✗ Gagal proses tasks: {str(e)}")
+        return False
+
+def spin_multiple(token, user_id, max_spins=100, proxy=None):
+    """Spin wheel berkali-kali sampai habis"""
+    try:
+        print(Fore.YELLOW + "\n➤ Mencoba spin wheel maksimal...")
+        spin_count = 0
+        
+        for i in range(max_spins):
+            if spin_wheel(token, user_id, proxy):
+                spin_count += 1
+                time.sleep(0.5)
+            else:
+                break
+        
+        if spin_count > 0:
+            print(Fore.BLUE + f"  Total spin berhasil: {spin_count}")
+        else:
+            print(Fore.YELLOW + "  ⚠ Spin tidak tersedia")
+        
+        return spin_count > 0
+    except Exception as e:
+        print(Fore.RED + f"  ✗ Gagal spin multiple: {str(e)}")
+        return False
+
+def process_account(init_data, account_num, total_accounts, proxies, interaction_config):
     try:
         print(Fore.CYAN + f"\n{'='*60}")
         print(Fore.CYAN + f"Memproses Akun {account_num}/{total_accounts}")
@@ -292,6 +611,27 @@ def process_account(init_data, account_num, total_accounts, proxies):
             level = quest_user.get('level', 0)
             print(Fore.BLUE + f"  Level: {level} | Points: {points}")
         
+        # Follow user (jika diaktifkan)
+        if interaction_config['follow_enabled'] and interaction_config['follow_user_ids']:
+            print(Fore.YELLOW + "\n➤ Follow user...")
+            for follow_id in interaction_config['follow_user_ids']:
+                follow_user(token, follow_id, proxy)
+                time.sleep(0.3)
+        else:
+            print(Fore.YELLOW + "\n⏭ Skip follow user (fitur dimatikan)")
+        
+        # Ambil feed dan proses like/komen
+        print(Fore.YELLOW + "\n➤ Mengambil feed artikel...")
+        feed_items = get_feed(token, limit=20, proxy=proxy)
+        if feed_items:
+            process_feed_interactions(
+                token, 
+                feed_items, 
+                max_count=10, 
+                comment_words=interaction_config['comment_words'],
+                proxy=proxy
+            )
+        
         # Daily Login
         print(Fore.YELLOW + "\n➤ Mengecek daily login...")
         daily_login(token, user_id, proxy)
@@ -300,12 +640,8 @@ def process_account(init_data, account_num, total_accounts, proxies):
         print(Fore.YELLOW + "\n➤ Mencoba klaim diamond gratis...")
         claim_free_diamond(token, user_id, telegram_id, proxy)
         
-        # Spin wheel
-        print(Fore.YELLOW + "\n➤ Mencoba spin wheel...")
-        spin_success = spin_wheel(token, user_id, proxy)
-        
-        if not spin_success:
-            print(Fore.YELLOW + "  ⚠ Spin tidak tersedia (mungkin sudah habis)")
+        #Spin multiple times
+        spin_multiple(token, user_id, max_spins=100, proxy=proxy)
         
         # Get inventory and open boxes
         print(Fore.YELLOW + "\n➤ Mengecek inventory...")
@@ -332,6 +668,15 @@ def process_account(init_data, account_num, total_accounts, proxies):
                 print(Fore.YELLOW + "\n➤ Membuka box...")
                 for box_key, box_amount, box_name in boxes_to_open:
                     open_box(token, user_id, box_key, box_amount, proxy)
+                    time.sleep(0.5)
+        
+        # Process tasks
+        process_tasks(token, user_id, proxy)
+        
+        # Get dan claim achievements
+        achievements = get_achievements(token, user_id, proxy)
+        if achievements:
+            process_achievements(token, user_id, achievements, proxy)
         
         print(Fore.GREEN + f"\n✓ Akun {account_num} selesai diproses")
         
@@ -363,6 +708,9 @@ def main():
     # Load proxies (optional)
     proxies = load_proxies()
     
+    # Load interaction config
+    interaction_config = load_interaction_config()
+    
     total_accounts = len(accounts)
     
     while True:
@@ -372,7 +720,7 @@ def main():
         print(Fore.MAGENTA + f"{'='*60}\n")
         
         for idx, init_data in enumerate(accounts, 1):
-            process_account(init_data, idx, total_accounts, proxies)
+            process_account(init_data, idx, total_accounts, proxies, interaction_config)
             
             # Jeda 5 detik antar akun (kecuali akun terakhir)
             if idx < total_accounts:
@@ -383,7 +731,7 @@ def main():
         print(Fore.MAGENTA + "Semua akun telah diproses")
         print(Fore.MAGENTA + f"{'='*60}\n")
         
-        # Countdown 1 hari (24 jam = 86400 detik)
+        # Countdown 4 jam (14400 detik)
         countdown(14400)
 
 if __name__ == "__main__":
