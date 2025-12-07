@@ -1,0 +1,11 @@
+# Konfigurasi Interaksi Bot 3VOgram
+# Gunakan # untuk komentar
+
+# Follow User (ON/OFF)
+FOLLOW=ON
+
+# ID User yang akan di-follow (pisahkan dengan koma jika lebih dari 1)
+FOLLOW_USER_ID=66242
+
+# Kata-kata untuk komentar (pisahkan dengan koma)
+COMMENT_WORDS=Hi,GM,Hello,GN,Like,Nice,Great,Amazing,Cool,Awesome,Thanks,Good
